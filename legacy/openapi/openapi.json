@@ -1,0 +1,3055 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Kostantinopel API",
+    "version": "1.0.0",
+    "description": "Kontrak REST API untuk **Kostantinopel**, sistem manajemen co-living (kost, kontrakan, apartemen, hotel).\n\n### Konvensi\n- Semua request dan response memakai `application/json` (kecuali ekspor CSV).\n- Response tunggal: `{ \"data\": { ... } }`. Response daftar: `{ \"data\": [ ... ], \"meta\": { ... } }`.\n- Error: `{ \"error\": { \"code\": \"...\", \"message\": \"...\", \"details\": [ ... ] } }`.\n- Tanggal memakai format `YYYY-MM-DD`, waktu memakai ISO-8601 (`2026-11-14T06:17:38.768Z`).\n- Nominal uang dalam Rupiah (integer, tanpa desimal).\n\n### Autentikasi\n1. `POST /auth/login` dengan email & password.\n2. Gunakan `token` dari response sebagai header: `Authorization: Bearer <token>`.\n3. Token berlaku 7 hari. `POST /auth/logout` mengakhiri sesi.\n\n### Peran\n- **admin** — akses penuh ke seluruh endpoint manajemen.\n- **tenant** — hanya endpoint portal penyewa dan data miliknya sendiri.\n\n> **Catatan demo:** aplikasi yang disertakan berjalan statis di browser (localStorage) dan belum menjalankan server HTTP. Dokumen ini adalah kontrak API untuk backend sungguhan; Swagger UI di halaman ini tidak dapat mengeksekusi request sampai server tersedia.\n",
+    "termsOfService": "https://kostantinopel.id/ketentuan",
+    "contact": {
+      "name": "Tim Kostantinopel",
+      "email": "halo@kostantinopel.id",
+      "url": "https://kostantinopel.id"
+    },
+    "license": {
+      "name": "MIT",
+      "url": "https://opensource.org/licenses/MIT"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://api.kostantinopel.id/v1",
+      "description": "Produksi"
+    },
+    {
+      "url": "http://localhost:8765/api/v1",
+      "description": "Pengembangan lokal"
+    }
+  ],
+  "tags": [
+    { "name": "Autentikasi", "description": "Login, registrasi, profil, dan password." },
+    { "name": "Dashboard", "description": "Statistik ringkas untuk dashboard admin." },
+    { "name": "Properti", "description": "CRUD properti: kost, kontrakan, apartemen, hotel." },
+    { "name": "Kamar", "description": "CRUD kamar/unit, ketersediaan, dan penghuni." },
+    { "name": "Penyewa", "description": "CRUD penyewa, identitas, akhir sewa, dan akun login penyewa." },
+    { "name": "Booking", "description": "Reservasi kamar, kalkulasi harga, dan alur status." },
+    { "name": "Tagihan", "description": "Tagihan sewa/booking dan pencatatan pembayaran." },
+    { "name": "Laporan & Permintaan", "description": "Tiket keluhan/permintaan dari penyewa beserta tanggapan pengelola." },
+    { "name": "Pengumuman", "description": "Broadcast pengumuman global atau per properti." },
+    { "name": "Analitik", "description": "Rekap pendapatan, okupansi, dan ekspor CSV." },
+    { "name": "Portal Penyewa", "description": "Endpoint khusus penyewa untuk data miliknya sendiri." },
+    { "name": "Sistem", "description": "Health check, informasi penyimpanan, cadangan, dan reset data demo." }
+  ],
+  "security": [
+    { "bearerAuth": [] }
+  ],
+  "paths": {
+    "/auth/login": {
+      "post": {
+        "tags": ["Autentikasi"],
+        "summary": "Masuk dan dapatkan token",
+        "operationId": "login",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/LoginRequest" },
+              "example": { "email": "admin@kostantinopel.id", "password": "admin123" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Login berhasil.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/LoginResult" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/auth/register": {
+      "post": {
+        "tags": ["Autentikasi"],
+        "summary": "Registrasi akun admin atau aktivasi akun penyewa",
+        "description": "Registrasi `admin` membuat akun pemilik baru. Registrasi `tenant` hanya berhasil bila email cocok dengan data penyewa aktif yang belum memiliki akun login.",
+        "operationId": "register",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RegisterRequest" },
+              "example": { "name": "Budi Santoso", "email": "budi@kostantinopel.id", "password": "rahasia123", "role": "admin" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Akun dibuat dan sesi langsung aktif.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/LoginResult" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "409": { "$ref": "#/components/responses/Conflict" },
+          "500": { "$ref": "#/components/responses/ServerError" }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "tags": ["Autentikasi"],
+        "summary": "Akhiri sesi",
+        "operationId": "logout",
+        "responses": {
+          "204": { "description": "Sesi diakhiri." },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "tags": ["Autentikasi"],
+        "summary": "Data pengguna yang sedang masuk",
+        "operationId": "getCurrentUser",
+        "responses": {
+          "200": {
+            "description": "Pengguna saat ini.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/User" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/auth/profile": {
+      "patch": {
+        "tags": ["Autentikasi"],
+        "summary": "Perbarui profil sendiri",
+        "description": "Nama dan email login. Bila pengguna adalah penyewa, nama juga disinkronkan ke data penyewa terkait.",
+        "operationId": "updateProfile",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ProfileUpdate" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Profil diperbarui.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/User" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/auth/change-password": {
+      "post": {
+        "tags": ["Autentikasi"],
+        "summary": "Ubah password sendiri",
+        "operationId": "changePassword",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/PasswordChange" } }
+          }
+        },
+        "responses": {
+          "204": { "description": "Password diubah." },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/dashboard/stats": {
+      "get": {
+        "tags": ["Dashboard"],
+        "summary": "Statistik ringkas dashboard",
+        "operationId": "getDashboardStats",
+        "x-roles": ["admin"],
+        "responses": {
+          "200": {
+            "description": "Statistik properti, kamar, pendapatan, dan aktivitas.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/DashboardStats" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/dashboard/revenue": {
+      "get": {
+        "tags": ["Dashboard"],
+        "summary": "Tren pendapatan beberapa bulan terakhir",
+        "operationId": "getRevenueTrend",
+        "x-roles": ["admin"],
+        "parameters": [
+          {
+            "name": "months",
+            "in": "query",
+            "description": "Jumlah bulan terakhir yang dihitung (default 6).",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 24, "default": 6 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Pendapatan per bulan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/RevenuePoint" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/dashboard/activity": {
+      "get": {
+        "tags": ["Dashboard"],
+        "summary": "Aktivitas terbaru (tagihan & booking)",
+        "operationId": "getRecentActivity",
+        "x-roles": ["admin"],
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Jumlah item maksimum (default 6).",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 50, "default": 6 }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Aktivitas terbaru.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/ActivityItem" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/dashboard/occupancy": {
+      "get": {
+        "tags": ["Dashboard"],
+        "summary": "Ringkasan okupansi seluruh kamar",
+        "operationId": "getOccupancy",
+        "x-roles": ["admin"],
+        "responses": {
+          "200": {
+            "description": "Ringkasan okupansi.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/OccupancyStats" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/dashboard/occupancy/by-property": {
+      "get": {
+        "tags": ["Dashboard"],
+        "summary": "Okupansi per properti",
+        "operationId": "getOccupancyByProperty",
+        "x-roles": ["admin"],
+        "responses": {
+          "200": {
+            "description": "Okupansi tiap properti.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/OccupancyByProperty" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/properties": {
+      "get": {
+        "tags": ["Properti"],
+        "summary": "Daftar properti",
+        "operationId": "listProperties",
+        "x-roles": ["admin"],
+        "parameters": [
+          { "$ref": "#/components/parameters/Search" },
+          {
+            "name": "type",
+            "in": "query",
+            "schema": { "$ref": "#/components/schemas/PropertyType" }
+          },
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/PerPage" },
+          { "$ref": "#/components/parameters/Sort" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/PropertyList" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "post": {
+        "tags": ["Properti"],
+        "summary": "Tambah properti",
+        "operationId": "createProperty",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PropertyInput" },
+              "example": {
+                "name": "Kostantinopel Kost Putri",
+                "type": "kost",
+                "address": "Jl. Anggrek No. 12, Bandung",
+                "phone": "0812-3456-7890",
+                "notes": "Kost khusus putri, 2 lantai."
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/Property" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/properties/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "get": {
+        "tags": ["Properti"],
+        "summary": "Detail properti",
+        "operationId": "getProperty",
+        "x-roles": ["admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Property" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "tags": ["Properti"],
+        "summary": "Perbarui properti",
+        "operationId": "updateProperty",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/PropertyUpdate" } }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Property" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Properti"],
+        "summary": "Hapus properti",
+        "description": "Gagal (409) bila properti masih memiliki kamar.",
+        "operationId": "deleteProperty",
+        "x-roles": ["admin"],
+        "responses": {
+          "204": { "description": "Properti dihapus." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/properties/{id}/rooms": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "get": {
+        "tags": ["Properti"],
+        "summary": "Daftar kamar dalam properti",
+        "operationId": "listPropertyRooms",
+        "x-roles": ["admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/RoomListNoPage" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/properties/{id}/summary": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "get": {
+        "tags": ["Properti"],
+        "summary": "Ringkasan properti",
+        "operationId": "getPropertySummary",
+        "x-roles": ["admin"],
+        "responses": {
+          "200": {
+            "description": "Ringkasan kamar dan okupansi properti.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/PropertySummary" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/rooms": {
+      "get": {
+        "tags": ["Kamar"],
+        "summary": "Daftar kamar",
+        "operationId": "listRooms",
+        "x-roles": ["admin"],
+        "parameters": [
+          { "$ref": "#/components/parameters/PropertyIdQuery" },
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Status efektif kamar (dihitung dari penyewa & booking aktif).",
+            "schema": { "$ref": "#/components/schemas/RoomEffectiveStatus" }
+          },
+          { "name": "type", "in": "query", "schema": { "type": "string" }, "example": "Single" },
+          { "$ref": "#/components/parameters/Search" },
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/PerPage" },
+          { "$ref": "#/components/parameters/Sort" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/RoomList" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "post": {
+        "tags": ["Kamar"],
+        "summary": "Tambah kamar",
+        "operationId": "createRoom",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RoomInput" },
+              "example": {
+                "propertyId": "prp_kost",
+                "number": "K-107",
+                "type": "Single",
+                "capacity": 1,
+                "priceDaily": 50000,
+                "priceMonthly": 850000,
+                "facilities": ["WiFi", "AC", "Kamar Mandi Dalam"],
+                "status": "available"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/Room" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/rooms/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "get": {
+        "tags": ["Kamar"],
+        "summary": "Detail kamar",
+        "operationId": "getRoom",
+        "x-roles": ["admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Room" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "tags": ["Kamar"],
+        "summary": "Perbarui kamar",
+        "operationId": "updateRoom",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/RoomUpdate" } }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Room" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      },
+      "delete": {
+        "tags": ["Kamar"],
+        "summary": "Hapus kamar",
+        "description": "Gagal (409) bila kamar masih dihuni penyewa aktif atau memiliki booking aktif.",
+        "operationId": "deleteRoom",
+        "x-roles": ["admin"],
+        "responses": {
+          "204": { "description": "Kamar dihapus." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/rooms/{id}/availability": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "get": {
+        "tags": ["Kamar"],
+        "summary": "Cek ketersediaan kamar pada periode tertentu",
+        "operationId": "checkRoomAvailability",
+        "x-roles": ["admin"],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "format": "date" },
+            "example": "2026-12-01"
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string", "format": "date" },
+            "example": "2026-12-05"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Hasil pengecekan ketersediaan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/RoomAvailability" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/rooms/{id}/tenants": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "get": {
+        "tags": ["Kamar"],
+        "summary": "Penyewa aktif di kamar",
+        "operationId": "listRoomTenants",
+        "x-roles": ["admin"],
+        "responses": {
+          "200": {
+            "description": "Penyewa aktif pada kamar tersebut.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Tenant" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/tenants": {
+      "get": {
+        "tags": ["Penyewa"],
+        "summary": "Daftar penyewa",
+        "operationId": "listTenants",
+        "x-roles": ["admin"],
+        "parameters": [
+          { "$ref": "#/components/parameters/PropertyIdQuery" },
+          {
+            "name": "status",
+            "in": "query",
+            "schema": { "$ref": "#/components/schemas/TenantStatus" }
+          },
+          { "$ref": "#/components/parameters/Search" },
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/PerPage" },
+          { "$ref": "#/components/parameters/Sort" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/TenantList" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "post": {
+        "tags": ["Penyewa"],
+        "summary": "Tambah penyewa",
+        "description": "Membuat data penyewa sekaligus tagihan sewa pertama. Gagal bila kamar sudah dihuni penyewa aktif.",
+        "operationId": "createTenant",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TenantInput" },
+              "example": {
+                "name": "Siti Rahma",
+                "roomId": "rm_k101",
+                "startDate": "2026-08-14",
+                "phone": "0811-1000-0001",
+                "idNumber": "3273012345670001",
+                "email": "siti@kostantinopel.id",
+                "gender": "Perempuan",
+                "occupation": "Desainer Grafis"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/Tenant" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/tenants/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "get": {
+        "tags": ["Penyewa"],
+        "summary": "Detail penyewa",
+        "operationId": "getTenant",
+        "x-roles": ["admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Tenant" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "tags": ["Penyewa"],
+        "summary": "Perbarui data penyewa",
+        "operationId": "updateTenant",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/TenantUpdate" } }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Tenant" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      },
+      "delete": {
+        "tags": ["Penyewa"],
+        "summary": "Hapus penyewa",
+        "description": "Gagal (409) bila penyewa masih memiliki akun login atau riwayat tagihan.",
+        "operationId": "deleteTenant",
+        "x-roles": ["admin"],
+        "responses": {
+          "204": { "description": "Penyewa dihapus." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/tenants/{id}/end-tenancy": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "post": {
+        "tags": ["Penyewa"],
+        "summary": "Akhiri masa sewa",
+        "description": "Mengubah status menjadi `inactive` dan mengisi `endDate` dengan tanggal hari ini.",
+        "operationId": "endTenancy",
+        "x-roles": ["admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Tenant" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/tenants/{id}/account": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "post": {
+        "tags": ["Penyewa"],
+        "summary": "Buat akun login penyewa",
+        "operationId": "createTenantAccount",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TenantAccountCreate" },
+              "example": { "email": "siti@kostantinopel.id", "password": "siti123" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Akun login penyewa dibuat.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/TenantAccount" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      },
+      "delete": {
+        "tags": ["Penyewa"],
+        "summary": "Hapus akun login penyewa",
+        "operationId": "deleteTenantAccount",
+        "x-roles": ["admin"],
+        "responses": {
+          "204": { "description": "Akun login dihapus; data penyewa tetap ada." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/tenants/{id}/account/password": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "patch": {
+        "tags": ["Penyewa"],
+        "summary": "Reset password akun penyewa",
+        "operationId": "resetTenantPassword",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/PasswordReset" } }
+          }
+        },
+        "responses": {
+          "204": { "description": "Password penyewa diperbarui." },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/tenants/{id}/invoices": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "get": {
+        "tags": ["Penyewa"],
+        "summary": "Tagihan milik penyewa",
+        "operationId": "listTenantInvoices",
+        "x-roles": ["admin", "tenant"],
+        "description": "Penyewa hanya dapat mengakses tagihannya sendiri.",
+        "responses": {
+          "200": { "$ref": "#/components/responses/InvoiceListNoPage" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/tenants/{id}/requests": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "get": {
+        "tags": ["Penyewa"],
+        "summary": "Laporan milik penyewa",
+        "operationId": "listTenantRequests",
+        "x-roles": ["admin", "tenant"],
+        "description": "Penyewa hanya dapat mengakses laporannya sendiri.",
+        "responses": {
+          "200": {
+            "description": "Laporan milik penyewa.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Request" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/tenants/{id}/identity": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "patch": {
+        "tags": ["Penyewa"],
+        "summary": "Perbarui identitas penyewa",
+        "description": "Dipakai admin atau penyewa pemilik akun untuk melengkapi data diri dan kontak darurat.",
+        "operationId": "updateTenantIdentity",
+        "x-roles": ["admin", "tenant"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/TenantIdentityUpdate" } }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Tenant" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/bookings": {
+      "get": {
+        "tags": ["Booking"],
+        "summary": "Daftar booking",
+        "operationId": "listBookings",
+        "x-roles": ["admin"],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": { "$ref": "#/components/schemas/BookingStatus" }
+          },
+          { "$ref": "#/components/parameters/PropertyIdQuery" },
+          { "name": "roomId", "in": "query", "schema": { "type": "string" } },
+          { "name": "from", "in": "query", "description": "Check-in minimal tanggal ini.", "schema": { "type": "string", "format": "date" } },
+          { "name": "to", "in": "query", "description": "Check-out maksimal tanggal ini.", "schema": { "type": "string", "format": "date" } },
+          { "$ref": "#/components/parameters/Search" },
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/PerPage" },
+          { "$ref": "#/components/parameters/Sort" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/BookingList" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "post": {
+        "tags": ["Booking"],
+        "summary": "Buat booking",
+        "description": "Total dihitung otomatis (harian, mingguan dengan diskon 10%, atau bulanan). Tagihan uang muka otomatis dibuat.",
+        "operationId": "createBooking",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/BookingInput" },
+              "example": {
+                "roomId": "rm_h201",
+                "guestName": "Andi Wijaya",
+                "guestPhone": "0813-2000-1111",
+                "checkIn": "2026-12-01",
+                "checkOut": "2026-12-04",
+                "rentType": "harian",
+                "notes": "Tiba sekitar pukul 20.00."
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/Booking" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/bookings/quote": {
+      "post": {
+        "tags": ["Booking"],
+        "summary": "Hitung total booking tanpa menyimpan",
+        "operationId": "quoteBooking",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/BookingQuoteRequest" },
+              "example": {
+                "roomId": "rm_h201",
+                "checkIn": "2026-12-01",
+                "checkOut": "2026-12-04",
+                "rentType": "harian"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rincian perhitungan total.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/BookingQuote" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/bookings/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "get": {
+        "tags": ["Booking"],
+        "summary": "Detail booking",
+        "operationId": "getBooking",
+        "x-roles": ["admin"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Booking" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "tags": ["Booking"],
+        "summary": "Perbarui booking",
+        "operationId": "updateBooking",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/BookingUpdate" } }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Booking" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      },
+      "delete": {
+        "tags": ["Booking"],
+        "summary": "Hapus booking",
+        "description": "Gagal (409) bila booking telah memiliki tagihan lunas.",
+        "operationId": "deleteBooking",
+        "x-roles": ["admin"],
+        "responses": {
+          "204": { "description": "Booking beserta tagihan yang belum dibayar dihapus." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/bookings/{id}/status": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "patch": {
+        "tags": ["Booking"],
+        "summary": "Ubah status booking",
+        "description": "Transisi yang diizinkan: `pending → confirmed|cancelled`, `confirmed → checkin|cancelled`, `checkin → checkedout`.",
+        "operationId": "updateBookingStatus",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/BookingStatusUpdate" },
+              "example": { "status": "confirmed" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Booking" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/invoices": {
+      "get": {
+        "tags": ["Tagihan"],
+        "summary": "Daftar tagihan",
+        "operationId": "listInvoices",
+        "x-roles": ["admin"],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "Status efektif (memperhitungkan jatuh tempo).",
+            "schema": { "$ref": "#/components/schemas/InvoiceEffectiveStatus" }
+          },
+          { "$ref": "#/components/parameters/PropertyIdQuery" },
+          { "name": "tenantId", "in": "query", "schema": { "type": "string" } },
+          { "name": "bookingId", "in": "query", "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/Search" },
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/PerPage" },
+          { "$ref": "#/components/parameters/Sort" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/InvoiceList" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "post": {
+        "tags": ["Tagihan"],
+        "summary": "Buat tagihan manual",
+        "operationId": "createInvoice",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/InvoiceInput" },
+              "example": {
+                "tenantId": "tnt_siti",
+                "roomId": "rm_k101",
+                "description": "Sewa kamar K-101 — Desember 2026",
+                "amount": 850000,
+                "dueDate": "2026-12-05"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/Invoice" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/invoices/summary": {
+      "get": {
+        "tags": ["Tagihan"],
+        "summary": "Ringkasan total tagihan",
+        "operationId": "getInvoiceSummary",
+        "x-roles": ["admin"],
+        "responses": {
+          "200": {
+            "description": "Total terbayar, belum dibayar, terlambat, dan pendapatan bulan ini.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/InvoiceSummary" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/invoices/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "get": {
+        "tags": ["Tagihan"],
+        "summary": "Detail tagihan",
+        "operationId": "getInvoice",
+        "x-roles": ["admin", "tenant"],
+        "description": "Penyewa hanya dapat mengakses tagihannya sendiri.",
+        "responses": {
+          "200": { "$ref": "#/components/responses/Invoice" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "tags": ["Tagihan"],
+        "summary": "Perbarui tagihan",
+        "description": "Hanya deskripsi, jumlah, dan jatuh tempo. Tagihan yang sudah lunas tidak dapat diubah.",
+        "operationId": "updateInvoice",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/InvoiceUpdate" } }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Invoice" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/invoices/{id}/payment": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "post": {
+        "tags": ["Tagihan"],
+        "summary": "Catat pembayaran tagihan",
+        "description": "Admin mencatat pembayaran atas nama penyewa; penyewa dapat mencatat pembayarannya sendiri (paidVia=`tenant`).",
+        "operationId": "payInvoice",
+        "x-roles": ["admin", "tenant"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/InvoicePayment" },
+              "example": { "method": "Transfer", "paidAt": "2026-11-14", "paidVia": "tenant" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Invoice" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/requests": {
+      "get": {
+        "tags": ["Laporan & Permintaan"],
+        "summary": "Daftar laporan",
+        "description": "Admin melihat semua laporan; penyewa hanya melihat laporannya sendiri.",
+        "operationId": "listRequests",
+        "x-roles": ["admin", "tenant"],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": { "$ref": "#/components/schemas/RequestStatus" }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "schema": { "$ref": "#/components/schemas/RequestCategory" }
+          },
+          {
+            "name": "priority",
+            "in": "query",
+            "schema": { "$ref": "#/components/schemas/RequestPriority" }
+          },
+          { "$ref": "#/components/parameters/PropertyIdQuery" },
+          { "name": "tenantId", "in": "query", "description": "Hanya untuk admin.", "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/Search" },
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/PerPage" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/RequestList" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "post": {
+        "tags": ["Laporan & Permintaan"],
+        "summary": "Buat laporan",
+        "description": "Penyewa membuat laporan untuk kamarnya sendiri. Admin dapat membuat atas nama penyewa dengan mengisi `tenantId`.",
+        "operationId": "createRequest",
+        "x-roles": ["admin", "tenant"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RequestInput" },
+              "example": {
+                "category": "perbaikan",
+                "priority": "normal",
+                "title": "AC kurang dingin",
+                "description": "AC di kamar sudah tidak dingin sejak dua hari lalu. Mohon diperiksa."
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Laporan dibuat.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/Request" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/requests/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "get": {
+        "tags": ["Laporan & Permintaan"],
+        "summary": "Detail laporan",
+        "operationId": "getRequest",
+        "x-roles": ["admin", "tenant"],
+        "responses": {
+          "200": {
+            "description": "Detail laporan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/Request" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "tags": ["Laporan & Permintaan"],
+        "summary": "Perbarui laporan",
+        "description": "Penyewa dapat memperbarui kategori, prioritas, judul, dan deskripsi laporannya. Perubahan status hanya untuk admin.",
+        "operationId": "updateRequest",
+        "x-roles": ["admin", "tenant"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/RequestUpdate" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Laporan diperbarui.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/Request" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Laporan & Permintaan"],
+        "summary": "Hapus laporan",
+        "operationId": "deleteRequest",
+        "x-roles": ["admin"],
+        "responses": {
+          "204": { "description": "Laporan dihapus." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/requests/{id}/response": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "post": {
+        "tags": ["Laporan & Permintaan"],
+        "summary": "Tanggapi laporan",
+        "operationId": "respondToRequest",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RequestResponseInput" },
+              "example": {
+                "status": "in_progress",
+                "response": "Teknisi dijadwalkan datang besok pukul 10.00."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Tanggapan tersimpan dan status diperbarui.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/Request" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/announcements": {
+      "get": {
+        "tags": ["Pengumuman"],
+        "summary": "Daftar pengumuman",
+        "description": "Penyewa menerima pengumuman global dan pengumuman propertinya. Admin melihat semua, terurut pin lalu tanggal.",
+        "operationId": "listAnnouncements",
+        "x-roles": ["admin", "tenant"],
+        "parameters": [
+          { "$ref": "#/components/parameters/PropertyIdQuery" },
+          { "name": "pinned", "in": "query", "schema": { "type": "boolean" } },
+          { "$ref": "#/components/parameters/Page" },
+          { "$ref": "#/components/parameters/PerPage" }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/AnnouncementList" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "post": {
+        "tags": ["Pengumuman"],
+        "summary": "Buat pengumuman",
+        "operationId": "createAnnouncement",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AnnouncementInput" },
+              "example": {
+                "title": "Pemeliharaan Air Lantai 2",
+                "body": "Pemeliharaan pompa air dilakukan Sabtu pukul 09.00–12.00. Mohon siapkan cadangan air.",
+                "propertyId": "prp_kost",
+                "pinned": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Pengumuman dibuat.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/Announcement" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/announcements/{id}": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "get": {
+        "tags": ["Pengumuman"],
+        "summary": "Detail pengumuman",
+        "operationId": "getAnnouncement",
+        "x-roles": ["admin", "tenant"],
+        "responses": {
+          "200": {
+            "description": "Detail pengumuman.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/Announcement" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "patch": {
+        "tags": ["Pengumuman"],
+        "summary": "Perbarui pengumuman",
+        "operationId": "updateAnnouncement",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/AnnouncementUpdate" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pengumuman diperbarui.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/Announcement" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Pengumuman"],
+        "summary": "Hapus pengumuman",
+        "operationId": "deleteAnnouncement",
+        "x-roles": ["admin"],
+        "responses": {
+          "204": { "description": "Pengumuman dihapus." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/announcements/{id}/pin": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "patch": {
+        "tags": ["Pengumuman"],
+        "summary": "Sematkan atau lepas sematan",
+        "operationId": "pinAnnouncement",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AnnouncementPin" },
+              "example": { "pinned": true }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Status sematan diperbarui.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/Announcement" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/analytics/occupancy": {
+      "get": {
+        "tags": ["Analitik"],
+        "summary": "Okupansi seluruh kamar",
+        "operationId": "getAnalyticsOccupancy",
+        "x-roles": ["admin"],
+        "responses": {
+          "200": {
+            "description": "Ringkasan okupansi.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/OccupancyStats" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/analytics/occupancy/by-property": {
+      "get": {
+        "tags": ["Analitik"],
+        "summary": "Okupansi per properti",
+        "operationId": "getAnalyticsOccupancyByProperty",
+        "x-roles": ["admin"],
+        "responses": {
+          "200": {
+            "description": "Okupansi tiap properti.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/OccupancyByProperty" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/analytics/revenue": {
+      "get": {
+        "tags": ["Analitik"],
+        "summary": "Rekap pendapatan per periode",
+        "operationId": "getRevenueReport",
+        "x-roles": ["admin"],
+        "parameters": [
+          {
+            "name": "from",
+            "in": "query",
+            "description": "Awal periode (default: awal bulan berjalan).",
+            "schema": { "type": "string", "format": "date" }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "description": "Akhir periode (default: hari ini).",
+            "schema": { "type": "string", "format": "date" }
+          },
+          { "$ref": "#/components/parameters/PropertyIdQuery" },
+          {
+            "name": "groupBy",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["month", "property", "method"], "default": "month" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rekap pendapatan.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/RevenueReport" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/analytics/revenue/export": {
+      "get": {
+        "tags": ["Analitik"],
+        "summary": "Ekspor pendapatan",
+        "operationId": "exportRevenue",
+        "x-roles": ["admin"],
+        "parameters": [
+          {
+            "name": "format",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["csv"], "default": "csv" }
+          },
+          {
+            "name": "from",
+            "in": "query",
+            "schema": { "type": "string", "format": "date" }
+          },
+          {
+            "name": "to",
+            "in": "query",
+            "schema": { "type": "string", "format": "date" }
+          },
+          { "$ref": "#/components/parameters/PropertyIdQuery" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Berkas CSV rekap pendapatan.",
+            "content": {
+              "text/csv": {
+                "schema": { "type": "string" },
+                "example": "kode,tanggal,properti,kamar,deskripsi,metode,jumlah\nINV-0004,2026-11-06,Kostantinopel Kost Putri,K-101,Sewa kamar K-101 — November 2026,Transfer,850000"
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/portal/summary": {
+      "get": {
+        "tags": ["Portal Penyewa"],
+        "summary": "Ringkasan portal penyewa",
+        "operationId": "getPortalSummary",
+        "x-roles": ["tenant"],
+        "responses": {
+          "200": {
+            "description": "Ringkasan kamar, tagihan, laporan, dan pengumuman penyewa.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/PortalSummary" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/portal/room": {
+      "get": {
+        "tags": ["Portal Penyewa"],
+        "summary": "Detail kamar saya",
+        "operationId": "getPortalRoom",
+        "x-roles": ["tenant"],
+        "responses": {
+          "200": {
+            "description": "Data sewa, kamar, dan properti penyewa.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/PortalRoom" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/portal/invoices": {
+      "get": {
+        "tags": ["Portal Penyewa"],
+        "summary": "Tagihan saya",
+        "operationId": "getPortalInvoices",
+        "x-roles": ["tenant"],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": { "$ref": "#/components/schemas/InvoiceEffectiveStatus" }
+          }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/InvoiceListNoPage" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/portal/invoices/{id}/payment": {
+      "parameters": [{ "$ref": "#/components/parameters/ResourceId" }],
+      "post": {
+        "tags": ["Portal Penyewa"],
+        "summary": "Catat pembayaran tagihan saya",
+        "description": "`paidVia` selalu diisi `tenant`. Tagihan milik penyewa lain ditolak (403).",
+        "operationId": "payPortalInvoice",
+        "x-roles": ["tenant"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/InvoicePayment" },
+              "example": { "method": "QRIS", "paidAt": "2026-11-14" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Invoice" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" },
+          "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/portal/requests": {
+      "get": {
+        "tags": ["Portal Penyewa"],
+        "summary": "Laporan saya",
+        "operationId": "getPortalRequests",
+        "x-roles": ["tenant"],
+        "responses": {
+          "200": {
+            "description": "Laporan milik penyewa.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Request" } }
+                  }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "post": {
+        "tags": ["Portal Penyewa"],
+        "summary": "Buat laporan baru",
+        "operationId": "createPortalRequest",
+        "x-roles": ["tenant"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RequestInput" },
+              "example": {
+                "category": "kebersihan",
+                "priority": "high",
+                "title": "Kamar mandi bocor",
+                "description": "Air menetes dari plafon kamar mandi sejak pagi."
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Laporan dibuat.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/Request" } }
+                }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/portal/announcements": {
+      "get": {
+        "tags": ["Portal Penyewa"],
+        "summary": "Pengumuman untuk saya",
+        "operationId": "getPortalAnnouncements",
+        "x-roles": ["tenant"],
+        "responses": {
+          "200": { "$ref": "#/components/responses/AnnouncementListNoPage" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/portal/identity": {
+      "patch": {
+        "tags": ["Portal Penyewa"],
+        "summary": "Perbarui identitas saya",
+        "operationId": "updatePortalIdentity",
+        "x-roles": ["tenant"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/TenantIdentityUpdate" },
+              "example": {
+                "name": "Siti Rahma",
+                "phone": "0811-1000-0001",
+                "idNumber": "3273012345670001",
+                "birthDate": "1998-04-12",
+                "gender": "Perempuan",
+                "occupation": "Desainer Grafis",
+                "address": "Jl. Anggrek No. 12, Bandung",
+                "emergencyName": "Rahmat Hidayat",
+                "emergencyPhone": "0812-9000-1111"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Tenant" },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "tags": ["Sistem"],
+        "summary": "Health check",
+        "operationId": "getHealth",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Server sehat.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/Health" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/system/info": {
+      "get": {
+        "tags": ["Sistem"],
+        "summary": "Informasi aplikasi & penyimpanan",
+        "operationId": "getSystemInfo",
+        "x-roles": ["admin"],
+        "responses": {
+          "200": {
+            "description": "Versi, waktu seed, ukuran penyimpanan, dan jumlah data.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["data"],
+                  "properties": { "data": { "$ref": "#/components/schemas/SystemInfo" } }
+                }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/system/backup": {
+      "get": {
+        "tags": ["Sistem"],
+        "summary": "Unduh cadangan data lengkap",
+        "operationId": "exportBackup",
+        "x-roles": ["admin"],
+        "responses": {
+          "200": {
+            "description": "Cadangan JSON seluruh koleksi.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Backup" }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/system/restore": {
+      "post": {
+        "tags": ["Sistem"],
+        "summary": "Pulihkan data dari cadangan",
+        "description": "Mengganti seluruh data dengan isi cadangan. Sesi aktif dihapus sehingga pengguna harus login ulang.",
+        "operationId": "restoreBackup",
+        "x-roles": ["admin"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/Backup" } }
+          }
+        },
+        "responses": {
+          "204": { "description": "Data dipulihkan." },
+          "400": { "$ref": "#/components/responses/BadRequest" },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/system/reset": {
+      "post": {
+        "tags": ["Sistem"],
+        "summary": "Reset ke data demo",
+        "description": "Mengembalikan seluruh data ke kondisi demo awal dan mengakhiri semua sesi.",
+        "operationId": "resetDemoData",
+        "x-roles": ["admin"],
+        "responses": {
+          "204": { "description": "Data demo dipulihkan." },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Token dari `POST /auth/login`. Header: `Authorization: Bearer <token>`."
+      }
+    },
+    "parameters": {
+      "Page": {
+        "name": "page",
+        "in": "query",
+        "description": "Halaman data (mulai dari 1).",
+        "schema": { "type": "integer", "minimum": 1, "default": 1 }
+      },
+      "PerPage": {
+        "name": "perPage",
+        "in": "query",
+        "description": "Jumlah data per halaman.",
+        "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 }
+      },
+      "Search": {
+        "name": "search",
+        "in": "query",
+        "description": "Pencarian teks bebas.",
+        "schema": { "type": "string" }
+      },
+      "Sort": {
+        "name": "sort",
+        "in": "query",
+        "description": "Urutan data. Awali dengan `-` untuk menurun, mis. `-createdAt`.",
+        "schema": { "type": "string" },
+        "example": "-createdAt"
+      },
+      "ResourceId": {
+        "name": "id",
+        "in": "path",
+        "required": true,
+        "description": "ID unik resource.",
+        "schema": { "type": "string" },
+        "example": "prp_kost"
+      },
+      "PropertyIdQuery": {
+        "name": "propertyId",
+        "in": "query",
+        "description": "Filter berdasarkan properti.",
+        "schema": { "type": "string" },
+        "example": "prp_kost"
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Permintaan tidak valid (400).",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+        }
+      },
+      "Unauthorized": {
+        "description": "Token tidak ada, kedaluwarsa, atau tidak valid (401).",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+        }
+      },
+      "Forbidden": {
+        "description": "Peran tidak berhak atau data milik pengguna lain (403).",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+        }
+      },
+      "NotFound": {
+        "description": "Resource tidak ditemukan (404).",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+        }
+      },
+      "Conflict": {
+        "description": "Konflik aturan bisnis, mis. kamar sudah dihuni atau tagihan sudah lunas (409).",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+        }
+      },
+      "ServerError": {
+        "description": "Kesalahan internal server (500).",
+        "content": {
+          "application/json": { "schema": { "$ref": "#/components/schemas/Error" } }
+        }
+      },
+      "Property": {
+        "description": "Data properti.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["data"],
+              "properties": { "data": { "$ref": "#/components/schemas/Property" } }
+            }
+          }
+        }
+      },
+      "PropertyList": {
+        "description": "Daftar properti.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["data"],
+              "properties": {
+                "data": { "type": "array", "items": { "$ref": "#/components/schemas/Property" } },
+                "meta": { "$ref": "#/components/schemas/Meta" }
+              }
+            }
+          }
+        }
+      },
+      "Room": {
+        "description": "Data kamar.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["data"],
+              "properties": { "data": { "$ref": "#/components/schemas/Room" } }
+            }
+          }
+        }
+      },
+      "RoomList": {
+        "description": "Daftar kamar.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["data"],
+              "properties": {
+                "data": { "type": "array", "items": { "$ref": "#/components/schemas/Room" } },
+                "meta": { "$ref": "#/components/schemas/Meta" }
+              }
+            }
+          }
+        }
+      },
+      "RoomListNoPage": {
+        "description": "Daftar kamar tanpa paginasi.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["data"],
+              "properties": {
+                "data": { "type": "array", "items": { "$ref": "#/components/schemas/Room" } }
+              }
+            }
+          }
+        }
+      },
+      "Tenant": {
+        "description": "Data penyewa.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["data"],
+              "properties": { "data": { "$ref": "#/components/schemas/Tenant" } }
+            }
+          }
+        }
+      },
+      "TenantList": {
+        "description": "Daftar penyewa.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["data"],
+              "properties": {
+                "data": { "type": "array", "items": { "$ref": "#/components/schemas/Tenant" } },
+                "meta": { "$ref": "#/components/schemas/Meta" }
+              }
+            }
+          }
+        }
+      },
+      "Booking": {
+        "description": "Data booking.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["data"],
+              "properties": { "data": { "$ref": "#/components/schemas/Booking" } }
+            }
+          }
+        }
+      },
+      "BookingList": {
+        "description": "Daftar booking.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["data"],
+              "properties": {
+                "data": { "type": "array", "items": { "$ref": "#/components/schemas/Booking" } },
+                "meta": { "$ref": "#/components/schemas/Meta" }
+              }
+            }
+          }
+        }
+      },
+      "Invoice": {
+        "description": "Data tagihan.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["data"],
+              "properties": { "data": { "$ref": "#/components/schemas/Invoice" } }
+            }
+          }
+        }
+      },
+      "InvoiceList": {
+        "description": "Daftar tagihan.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["data"],
+              "properties": {
+                "data": { "type": "array", "items": { "$ref": "#/components/schemas/Invoice" } },
+                "meta": { "$ref": "#/components/schemas/Meta" }
+              }
+            }
+          }
+        }
+      },
+      "InvoiceListNoPage": {
+        "description": "Daftar tagihan tanpa paginasi.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["data"],
+              "properties": {
+                "data": { "type": "array", "items": { "$ref": "#/components/schemas/Invoice" } }
+              }
+            }
+          }
+        }
+      },
+      "RequestList": {
+        "description": "Daftar laporan.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["data"],
+              "properties": {
+                "data": { "type": "array", "items": { "$ref": "#/components/schemas/Request" } },
+                "meta": { "$ref": "#/components/schemas/Meta" }
+              }
+            }
+          }
+        }
+      },
+      "AnnouncementList": {
+        "description": "Daftar pengumuman.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["data"],
+              "properties": {
+                "data": { "type": "array", "items": { "$ref": "#/components/schemas/Announcement" } },
+                "meta": { "$ref": "#/components/schemas/Meta" }
+              }
+            }
+          }
+        }
+      },
+      "AnnouncementListNoPage": {
+        "description": "Daftar pengumuman tanpa paginasi.",
+        "content": {
+          "application/json": {
+            "schema": {
+              "type": "object",
+              "required": ["data"],
+              "properties": {
+                "data": { "type": "array", "items": { "$ref": "#/components/schemas/Announcement" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["code", "message"],
+            "properties": {
+              "code": { "type": "string", "example": "VALIDATION_ERROR" },
+              "message": { "type": "string", "example": "Nama properti wajib diisi" },
+              "details": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/FieldError" }
+              }
+            }
+          }
+        }
+      },
+      "FieldError": {
+        "type": "object",
+        "properties": {
+          "field": { "type": "string", "example": "name" },
+          "message": { "type": "string", "example": "Wajib diisi" }
+        }
+      },
+      "Meta": {
+        "type": "object",
+        "properties": {
+          "page": { "type": "integer", "example": 1 },
+          "perPage": { "type": "integer", "example": 20 },
+          "total": { "type": "integer", "example": 4 },
+          "totalPages": { "type": "integer", "example": 1 }
+        }
+      },
+      "User": {
+        "type": "object",
+        "required": ["id", "name", "email", "role"],
+        "properties": {
+          "id": { "type": "string", "example": "usr_admin" },
+          "name": { "type": "string", "example": "Admin Kostantinopel" },
+          "email": { "type": "string", "format": "email", "example": "admin@kostantinopel.id" },
+          "role": { "$ref": "#/components/schemas/Role" },
+          "tenantId": { "type": "string", "nullable": true, "description": "Terisi bila akun terhubung ke data penyewa.", "example": "tnt_siti" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Role": {
+        "type": "string",
+        "enum": ["admin", "tenant"],
+        "description": "`admin` = pemilik/pengelola, `tenant` = penyewa."
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "format": "password" }
+        }
+      },
+      "LoginResult": {
+        "type": "object",
+        "required": ["token", "expiresAt", "user"],
+        "properties": {
+          "token": { "type": "string", "description": "Bearer token (JWT)." },
+          "expiresAt": { "type": "integer", "format": "int64", "description": "Waktu kedaluwarsa (epoch milidetik)." },
+          "user": { "$ref": "#/components/schemas/User" }
+        }
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": ["email", "password", "role"],
+        "properties": {
+          "name": { "type": "string", "description": "Wajib untuk role `admin`; diabaikan untuk `tenant`." },
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "minLength": 6, "format": "password" },
+          "role": { "$ref": "#/components/schemas/Role" }
+        }
+      },
+      "ProfileUpdate": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "email": { "type": "string", "format": "email" }
+        }
+      },
+      "PasswordChange": {
+        "type": "object",
+        "required": ["currentPassword", "newPassword"],
+        "properties": {
+          "currentPassword": { "type": "string", "format": "password" },
+          "newPassword": { "type": "string", "minLength": 6, "format": "password" }
+        }
+      },
+      "PropertyType": {
+        "type": "string",
+        "enum": ["kost", "kontrakan", "apartemen", "hotel"],
+        "description": "Kost, Kontrakan, Apartemen, atau Hotel."
+      },
+      "Property": {
+        "type": "object",
+        "required": ["id", "name", "type"],
+        "properties": {
+          "id": { "type": "string", "example": "prp_kost" },
+          "name": { "type": "string", "example": "Kostantinopel Kost Putri" },
+          "type": { "$ref": "#/components/schemas/PropertyType" },
+          "address": { "type": "string", "example": "Jl. Anggrek No. 12, Bandung" },
+          "phone": { "type": "string", "example": "0812-3456-7890" },
+          "notes": { "type": "string", "example": "Kost khusus putri, 2 lantai." },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "PropertyInput": {
+        "type": "object",
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "type": { "$ref": "#/components/schemas/PropertyType" },
+          "address": { "type": "string" },
+          "phone": { "type": "string" },
+          "notes": { "type": "string" }
+        }
+      },
+      "PropertyUpdate": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "type": { "$ref": "#/components/schemas/PropertyType" },
+          "address": { "type": "string" },
+          "phone": { "type": "string" },
+          "notes": { "type": "string" }
+        }
+      },
+      "PropertySummary": {
+        "type": "object",
+        "properties": {
+          "propertyId": { "type": "string" },
+          "name": { "type": "string" },
+          "totalRooms": { "type": "integer" },
+          "occupied": { "type": "integer" },
+          "available": { "type": "integer" },
+          "maintenance": { "type": "integer" },
+          "occupancyRate": { "type": "integer", "description": "Persentase 0–100." }
+        }
+      },
+      "RoomStatus": {
+        "type": "string",
+        "enum": ["available", "maintenance"],
+        "description": "Status yang dapat diatur manual. Status `occupied` dihitung otomatis."
+      },
+      "RoomEffectiveStatus": {
+        "type": "string",
+        "enum": ["available", "occupied", "maintenance"],
+        "description": "Status efektif kamar (dihitung dari penyewa aktif dan booking aktif)."
+      },
+      "Room": {
+        "type": "object",
+        "required": ["id", "propertyId", "number"],
+        "properties": {
+          "id": { "type": "string", "example": "rm_k101" },
+          "propertyId": { "type": "string", "example": "prp_kost" },
+          "number": { "type": "string", "example": "K-101" },
+          "type": { "type": "string", "example": "Single" },
+          "capacity": { "type": "integer", "minimum": 1, "example": 1 },
+          "priceDaily": { "type": "integer", "description": "Harga sewa harian (Rp).", "example": 50000 },
+          "priceMonthly": { "type": "integer", "description": "Harga sewa bulanan (Rp).", "example": 850000 },
+          "facilities": {
+            "type": "array",
+            "items": { "type": "string" },
+            "example": ["WiFi", "AC", "Kamar Mandi Dalam", "Lemari"]
+          },
+          "status": { "$ref": "#/components/schemas/RoomStatus" },
+          "effectiveStatus": { "$ref": "#/components/schemas/RoomEffectiveStatus" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "RoomInput": {
+        "type": "object",
+        "required": ["propertyId", "number"],
+        "properties": {
+          "propertyId": { "type": "string" },
+          "number": { "type": "string", "minLength": 1 },
+          "type": { "type": "string" },
+          "capacity": { "type": "integer", "minimum": 1, "maximum": 20, "default": 1 },
+          "priceDaily": { "type": "integer", "minimum": 0, "default": 0 },
+          "priceMonthly": { "type": "integer", "minimum": 0, "default": 0 },
+          "facilities": { "type": "array", "items": { "type": "string" } },
+          "status": { "$ref": "#/components/schemas/RoomStatus" }
+        }
+      },
+      "RoomUpdate": {
+        "type": "object",
+        "properties": {
+          "propertyId": { "type": "string" },
+          "number": { "type": "string", "minLength": 1 },
+          "type": { "type": "string" },
+          "capacity": { "type": "integer", "minimum": 1, "maximum": 20 },
+          "priceDaily": { "type": "integer", "minimum": 0 },
+          "priceMonthly": { "type": "integer", "minimum": 0 },
+          "facilities": { "type": "array", "items": { "type": "string" } },
+          "status": { "$ref": "#/components/schemas/RoomStatus" }
+        }
+      },
+      "RoomAvailability": {
+        "type": "object",
+        "properties": {
+          "roomId": { "type": "string" },
+          "from": { "type": "string", "format": "date" },
+          "to": { "type": "string", "format": "date" },
+          "available": { "type": "boolean" },
+          "effectiveStatus": { "$ref": "#/components/schemas/RoomEffectiveStatus" },
+          "reason": { "type": "string", "nullable": true, "example": "Kamar sedang dihuni penyewa aktif." }
+        }
+      },
+      "TenantStatus": {
+        "type": "string",
+        "enum": ["active", "inactive"],
+        "description": "`active` = sewa berjalan, `inactive` = selesai."
+      },
+      "Tenant": {
+        "type": "object",
+        "required": ["id", "name", "roomId", "status"],
+        "properties": {
+          "id": { "type": "string", "example": "tnt_siti" },
+          "name": { "type": "string", "example": "Siti Rahma" },
+          "phone": { "type": "string", "example": "0811-1000-0001" },
+          "idNumber": { "type": "string", "description": "Nomor KTP.", "example": "3273012345670001" },
+          "email": { "type": "string", "format": "email", "example": "siti@kostantinopel.id" },
+          "address": { "type": "string" },
+          "birthDate": { "type": "string", "format": "date" },
+          "gender": { "type": "string", "enum": ["Laki-laki", "Perempuan"] },
+          "occupation": { "type": "string", "example": "Desainer Grafis" },
+          "emergencyName": { "type": "string" },
+          "emergencyPhone": { "type": "string" },
+          "propertyId": { "type": "string" },
+          "roomId": { "type": "string", "example": "rm_k101" },
+          "startDate": { "type": "string", "format": "date" },
+          "endDate": { "type": "string", "format": "date", "nullable": true },
+          "status": { "$ref": "#/components/schemas/TenantStatus" },
+          "note": { "type": "string" },
+          "loginAccount": { "$ref": "#/components/schemas/TenantAccount" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "TenantAccount": {
+        "type": "object",
+        "description": "Akun login milik penyewa. Null bila belum dibuat.",
+        "properties": {
+          "id": { "type": "string", "example": "usr_tenant_siti" },
+          "tenantId": { "type": "string", "example": "tnt_siti" },
+          "name": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "role": { "type": "string", "enum": ["tenant"] },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "TenantInput": {
+        "type": "object",
+        "required": ["name", "roomId", "startDate"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "roomId": { "type": "string" },
+          "startDate": { "type": "string", "format": "date" },
+          "endDate": { "type": "string", "format": "date", "nullable": true },
+          "phone": { "type": "string" },
+          "idNumber": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "address": { "type": "string" },
+          "birthDate": { "type": "string", "format": "date" },
+          "gender": { "type": "string", "enum": ["Laki-laki", "Perempuan"] },
+          "occupation": { "type": "string" },
+          "emergencyName": { "type": "string" },
+          "emergencyPhone": { "type": "string" },
+          "note": { "type": "string" },
+          "amount": { "type": "integer", "description": "Nominal tagihan pertama (default: harga bulanan kamar)." }
+        }
+      },
+      "TenantUpdate": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "roomId": { "type": "string" },
+          "propertyId": { "type": "string" },
+          "startDate": { "type": "string", "format": "date" },
+          "endDate": { "type": "string", "format": "date", "nullable": true },
+          "phone": { "type": "string" },
+          "idNumber": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "address": { "type": "string" },
+          "birthDate": { "type": "string", "format": "date" },
+          "gender": { "type": "string", "enum": ["Laki-laki", "Perempuan"] },
+          "occupation": { "type": "string" },
+          "emergencyName": { "type": "string" },
+          "emergencyPhone": { "type": "string" },
+          "note": { "type": "string" }
+        }
+      },
+      "TenantIdentityUpdate": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string", "minLength": 1 },
+          "phone": { "type": "string" },
+          "idNumber": { "type": "string", "description": "8–20 digit angka." },
+          "email": { "type": "string", "format": "email" },
+          "address": { "type": "string" },
+          "birthDate": { "type": "string", "format": "date" },
+          "gender": { "type": "string", "enum": ["Laki-laki", "Perempuan"] },
+          "occupation": { "type": "string" },
+          "emergencyName": { "type": "string" },
+          "emergencyPhone": { "type": "string" }
+        }
+      },
+      "TenantAccountCreate": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "minLength": 6, "format": "password" }
+        }
+      },
+      "PasswordReset": {
+        "type": "object",
+        "required": ["password"],
+        "properties": {
+          "password": { "type": "string", "minLength": 6, "format": "password" }
+        }
+      },
+      "RentType": {
+        "type": "string",
+        "enum": ["harian", "mingguan", "bulanan"],
+        "description": "Harian, mingguan (diskon 10%), atau bulanan."
+      },
+      "BookingStatus": {
+        "type": "string",
+        "enum": ["pending", "confirmed", "checkin", "checkedout", "cancelled"],
+        "description": "Menunggu → Terkonfirmasi → Check-in → Check-out, atau Dibatalkan."
+      },
+      "Booking": {
+        "type": "object",
+        "required": ["id", "code", "roomId", "status"],
+        "properties": {
+          "id": { "type": "string", "example": "bk_0001" },
+          "code": { "type": "string", "example": "BK-0001" },
+          "tenantId": { "type": "string", "nullable": true },
+          "guestName": { "type": "string", "example": "Andi Wijaya" },
+          "guestPhone": { "type": "string" },
+          "propertyId": { "type": "string" },
+          "roomId": { "type": "string" },
+          "checkIn": { "type": "string", "format": "date" },
+          "checkOut": { "type": "string", "format": "date" },
+          "rentType": { "$ref": "#/components/schemas/RentType" },
+          "days": { "type": "integer", "example": 3 },
+          "units": { "type": "integer", "example": 3 },
+          "unitLabel": { "type": "string", "enum": ["malam", "minggu", "bulan"] },
+          "total": { "type": "integer", "example": 1050000 },
+          "status": { "$ref": "#/components/schemas/BookingStatus" },
+          "notes": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "BookingInput": {
+        "type": "object",
+        "required": ["roomId", "guestName", "checkIn", "checkOut", "rentType"],
+        "properties": {
+          "roomId": { "type": "string" },
+          "guestName": { "type": "string", "minLength": 1 },
+          "guestPhone": { "type": "string" },
+          "checkIn": { "type": "string", "format": "date" },
+          "checkOut": { "type": "string", "format": "date", "description": "Harus setelah `checkIn`." },
+          "rentType": { "$ref": "#/components/schemas/RentType" },
+          "notes": { "type": "string" }
+        }
+      },
+      "BookingUpdate": {
+        "type": "object",
+        "properties": {
+          "guestName": { "type": "string", "minLength": 1 },
+          "guestPhone": { "type": "string" },
+          "checkIn": { "type": "string", "format": "date" },
+          "checkOut": { "type": "string", "format": "date" },
+          "rentType": { "$ref": "#/components/schemas/RentType" },
+          "notes": { "type": "string" }
+        }
+      },
+      "BookingQuoteRequest": {
+        "type": "object",
+        "required": ["roomId", "checkIn", "checkOut", "rentType"],
+        "properties": {
+          "roomId": { "type": "string" },
+          "checkIn": { "type": "string", "format": "date" },
+          "checkOut": { "type": "string", "format": "date" },
+          "rentType": { "$ref": "#/components/schemas/RentType" }
+        }
+      },
+      "BookingQuote": {
+        "type": "object",
+        "properties": {
+          "roomId": { "type": "string" },
+          "checkIn": { "type": "string", "format": "date" },
+          "checkOut": { "type": "string", "format": "date" },
+          "rentType": { "$ref": "#/components/schemas/RentType" },
+          "days": { "type": "integer" },
+          "units": { "type": "integer" },
+          "unitLabel": { "type": "string", "enum": ["malam", "minggu", "bulan"] },
+          "total": { "type": "integer" }
+        }
+      },
+      "BookingStatusUpdate": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": { "$ref": "#/components/schemas/BookingStatus" }
+        }
+      },
+      "InvoiceEffectiveStatus": {
+        "type": "string",
+        "enum": ["unpaid", "late", "paid"],
+        "description": "`late` bila belum dibayar dan sudah melewati jatuh tempo."
+      },
+      "PaymentMethod": {
+        "type": "string",
+        "enum": ["Tunai", "Transfer", "QRIS", "Kartu Debit"],
+        "description": "Metode pembayaran."
+      },
+      "Invoice": {
+        "type": "object",
+        "required": ["id", "code", "description", "amount", "status"],
+        "properties": {
+          "id": { "type": "string", "example": "inv_0001" },
+          "code": { "type": "string", "example": "INV-0001" },
+          "bookingId": { "type": "string", "nullable": true },
+          "tenantId": { "type": "string", "nullable": true },
+          "propertyId": { "type": "string", "nullable": true },
+          "roomId": { "type": "string", "nullable": true },
+          "description": { "type": "string", "example": "Sewa kamar K-101 — November 2026" },
+          "amount": { "type": "integer", "example": 850000 },
+          "dueDate": { "type": "string", "format": "date" },
+          "status": { "type": "string", "enum": ["unpaid", "paid"], "description": "Status tersimpan." },
+          "effectiveStatus": { "$ref": "#/components/schemas/InvoiceEffectiveStatus" },
+          "paidAt": { "type": "string", "format": "date", "nullable": true },
+          "method": { "allOf": [{ "$ref": "#/components/schemas/PaymentMethod" }], "nullable": true },
+          "paidVia": { "type": "string", "enum": ["admin", "tenant"], "nullable": true, "description": "Siapa yang mencatat pembayaran." },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "InvoiceInput": {
+        "type": "object",
+        "required": ["amount"],
+        "properties": {
+          "description": { "type": "string", "default": "Tagihan" },
+          "amount": { "type": "integer", "minimum": 0 },
+          "dueDate": { "type": "string", "format": "date", "description": "Default: hari ini." },
+          "tenantId": { "type": "string" },
+          "bookingId": { "type": "string" },
+          "roomId": { "type": "string" },
+          "propertyId": { "type": "string" }
+        }
+      },
+      "InvoiceUpdate": {
+        "type": "object",
+        "properties": {
+          "description": { "type": "string" },
+          "amount": { "type": "integer", "minimum": 0 },
+          "dueDate": { "type": "string", "format": "date" }
+        }
+      },
+      "InvoicePayment": {
+        "type": "object",
+        "required": ["method"],
+        "properties": {
+          "method": { "$ref": "#/components/schemas/PaymentMethod" },
+          "paidAt": { "type": "string", "format": "date", "description": "Default: hari ini." },
+          "paidVia": { "type": "string", "enum": ["admin", "tenant"], "description": "Diisi otomatis `tenant` pada endpoint portal." }
+        }
+      },
+      "InvoiceSummary": {
+        "type": "object",
+        "properties": {
+          "paidTotal": { "type": "integer" },
+          "unpaidTotal": { "type": "integer" },
+          "lateTotal": { "type": "integer" },
+          "paidThisMonth": { "type": "integer" }
+        }
+      },
+      "RequestCategory": {
+        "type": "string",
+        "enum": ["perbaikan", "kebersihan", "keamanan", "keluhan", "lainnya"]
+      },
+      "RequestStatus": {
+        "type": "string",
+        "enum": ["open", "in_progress", "done", "rejected"],
+        "description": "Baru, Diproses, Selesai, atau Ditolak."
+      },
+      "RequestPriority": {
+        "type": "string",
+        "enum": ["low", "normal", "high"]
+      },
+      "Request": {
+        "type": "object",
+        "required": ["id", "code", "title", "status"],
+        "properties": {
+          "id": { "type": "string", "example": "req_ac" },
+          "code": { "type": "string", "example": "REQ-0001" },
+          "tenantId": { "type": "string" },
+          "propertyId": { "type": "string" },
+          "roomId": { "type": "string" },
+          "category": { "$ref": "#/components/schemas/RequestCategory" },
+          "priority": { "$ref": "#/components/schemas/RequestPriority" },
+          "title": { "type": "string", "example": "AC kurang dingin" },
+          "description": { "type": "string" },
+          "status": { "$ref": "#/components/schemas/RequestStatus" },
+          "response": { "type": "string", "description": "Tanggapan pengelola." },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" },
+          "respondedAt": { "type": "string", "format": "date-time", "nullable": true },
+          "resolvedAt": { "type": "string", "format": "date", "nullable": true }
+        }
+      },
+      "RequestInput": {
+        "type": "object",
+        "required": ["title", "description"],
+        "properties": {
+          "tenantId": { "type": "string", "description": "Hanya admin. Diabaikan untuk penyewa." },
+          "category": { "$ref": "#/components/schemas/RequestCategory" },
+          "priority": { "$ref": "#/components/schemas/RequestPriority" },
+          "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "description": { "type": "string", "minLength": 1 },
+          "status": { "$ref": "#/components/schemas/RequestStatus" }
+        }
+      },
+      "RequestUpdate": {
+        "type": "object",
+        "properties": {
+          "category": { "$ref": "#/components/schemas/RequestCategory" },
+          "priority": { "$ref": "#/components/schemas/RequestPriority" },
+          "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "description": { "type": "string", "minLength": 1 },
+          "status": { "$ref": "#/components/schemas/RequestStatus" },
+          "response": { "type": "string" }
+        }
+      },
+      "RequestResponseInput": {
+        "type": "object",
+        "required": ["status", "response"],
+        "properties": {
+          "status": { "$ref": "#/components/schemas/RequestStatus" },
+          "response": { "type": "string", "minLength": 1 }
+        }
+      },
+      "Announcement": {
+        "type": "object",
+        "required": ["id", "title", "body"],
+        "properties": {
+          "id": { "type": "string", "example": "ann_air" },
+          "title": { "type": "string", "example": "Pemeliharaan Air Lantai 2" },
+          "body": { "type": "string" },
+          "propertyId": { "type": "string", "nullable": true, "description": "Null = semua properti." },
+          "pinned": { "type": "boolean", "default": false },
+          "author": { "type": "string", "example": "Admin Kostantinopel" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AnnouncementInput": {
+        "type": "object",
+        "required": ["title", "body"],
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 90 },
+          "body": { "type": "string", "minLength": 1 },
+          "propertyId": { "type": "string", "nullable": true },
+          "pinned": { "type": "boolean" },
+          "author": { "type": "string" }
+        }
+      },
+      "AnnouncementUpdate": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 90 },
+          "body": { "type": "string", "minLength": 1 },
+          "propertyId": { "type": "string", "nullable": true },
+          "pinned": { "type": "boolean" }
+        }
+      },
+      "AnnouncementPin": {
+        "type": "object",
+        "required": ["pinned"],
+        "properties": {
+          "pinned": { "type": "boolean" }
+        }
+      },
+      "DashboardStats": {
+        "type": "object",
+        "properties": {
+          "properties": { "type": "integer", "example": 2 },
+          "roomsTotal": { "type": "integer", "example": 12 },
+          "roomsOccupied": { "type": "integer", "example": 4 },
+          "occupancyRate": { "type": "integer", "example": 33 },
+          "revenueThisMonth": { "type": "integer", "example": 4250000 },
+          "outstanding": { "type": "integer", "example": 3750000 },
+          "late": { "type": "integer", "example": 2000000 },
+          "activeTenants": { "type": "integer", "example": 4 },
+          "pendingBookings": { "type": "integer", "example": 1 },
+          "inHouse": { "type": "integer", "example": 1 },
+          "arrivals": { "type": "integer", "example": 1 },
+          "departures": { "type": "integer", "example": 0 },
+          "openRequests": { "type": "integer", "example": 2 },
+          "newRequests": { "type": "integer", "example": 1 },
+          "announcements": { "type": "integer", "example": 3 }
+        }
+      },
+      "OccupancyStats": {
+        "type": "object",
+        "properties": {
+          "total": { "type": "integer" },
+          "occupied": { "type": "integer" },
+          "available": { "type": "integer" },
+          "maintenance": { "type": "integer" },
+          "rate": { "type": "integer", "description": "Persentase 0–100." }
+        }
+      },
+      "OccupancyByProperty": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "type": { "$ref": "#/components/schemas/PropertyType" },
+          "total": { "type": "integer" },
+          "occupied": { "type": "integer" },
+          "available": { "type": "integer" },
+          "rate": { "type": "integer" }
+        }
+      },
+      "RevenuePoint": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string", "example": "2026-11" },
+          "label": { "type": "string", "example": "Nov" },
+          "total": { "type": "integer", "example": 4250000 }
+        }
+      },
+      "RevenueReport": {
+        "type": "object",
+        "properties": {
+          "from": { "type": "string", "format": "date" },
+          "to": { "type": "string", "format": "date" },
+          "groupBy": { "type": "string", "enum": ["month", "property", "method"] },
+          "total": { "type": "integer" },
+          "points": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/RevenuePoint" }
+          }
+        }
+      },
+      "ActivityItem": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string", "enum": ["invoice", "booking"] },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "title": { "type": "string", "example": "INV-0004 — Sewa kamar K-101 — November 2026" },
+          "status": { "type": "string", "example": "paid" },
+          "amount": { "type": "integer" }
+        }
+      },
+      "PortalSummary": {
+        "type": "object",
+        "properties": {
+          "tenant": { "$ref": "#/components/schemas/Tenant" },
+          "property": { "$ref": "#/components/schemas/Property" },
+          "room": { "$ref": "#/components/schemas/Room" },
+          "outstanding": { "type": "integer", "description": "Total tunggakan (Rp)." },
+          "unpaidCount": { "type": "integer" },
+          "nextDueDate": { "type": "string", "format": "date", "nullable": true },
+          "activeRequests": { "type": "integer" },
+          "latestAnnouncements": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Announcement" }
+          }
+        }
+      },
+      "PortalRoom": {
+        "type": "object",
+        "properties": {
+          "tenant": { "$ref": "#/components/schemas/Tenant" },
+          "property": { "$ref": "#/components/schemas/Property" },
+          "room": { "$ref": "#/components/schemas/Room" },
+          "active": { "type": "boolean", "description": "True bila masa sewa masih berjalan." }
+        }
+      },
+      "Health": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "example": "ok" },
+          "time": { "type": "string", "format": "date-time" },
+          "version": { "type": "string", "example": "1.0.0" }
+        }
+      },
+      "SystemInfo": {
+        "type": "object",
+        "properties": {
+          "version": { "type": "string", "example": "1.0.0" },
+          "seededAt": { "type": "string", "format": "date-time", "nullable": true },
+          "storageBytes": { "type": "integer" },
+          "storageKb": { "type": "string", "example": "36.1" },
+          "counts": {
+            "type": "object",
+            "properties": {
+              "properties": { "type": "integer" },
+              "rooms": { "type": "integer" },
+              "tenants": { "type": "integer" },
+              "bookings": { "type": "integer" },
+              "invoices": { "type": "integer" },
+              "requests": { "type": "integer" },
+              "announcements": { "type": "integer" },
+              "users": { "type": "integer" }
+            }
+          }
+        }
+      },
+      "Backup": {
+        "type": "object",
+        "description": "Cadangan lengkap seluruh koleksi data (format sama dengan ekspor JSON aplikasi).",
+        "required": ["users", "properties"],
+        "properties": {
+          "users": { "type": "array", "items": { "$ref": "#/components/schemas/User" } },
+          "properties": { "type": "array", "items": { "$ref": "#/components/schemas/Property" } },
+          "rooms": { "type": "array", "items": { "$ref": "#/components/schemas/Room" } },
+          "tenants": { "type": "array", "items": { "$ref": "#/components/schemas/Tenant" } },
+          "bookings": { "type": "array", "items": { "$ref": "#/components/schemas/Booking" } },
+          "invoices": { "type": "array", "items": { "$ref": "#/components/schemas/Invoice" } },
+          "requests": { "type": "array", "items": { "$ref": "#/components/schemas/Request" } },
+          "announcements": { "type": "array", "items": { "$ref": "#/components/schemas/Announcement" } }
+        },
+        "additionalProperties": true
+      }
+    }
+  }
+}

@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="id" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light dark">
+  <title>Kostantinopel API Client</title>
+  <meta name="description" content="Web client CRUD terpisah untuk REST API Kostantinopel: properti, kamar, penyewa, booking, tagihan, laporan, dan pengumuman.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%234f46e5'/%3E%3Cpath d='M8 15.5 16 8.5l8 7M10.8 14v9.5h10.4V14' stroke='white' stroke-width='2.1' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+  <script>
+    (function () {
+      try {
+        var theme = localStorage.getItem('kostantinopel.client.theme');
+        if (theme !== 'dark' && theme !== 'light') {
+          theme = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+        document.documentElement.setAttribute('data-theme', theme);
+        document.documentElement.style.colorScheme = theme;
+      } catch (error) {
+        document.documentElement.setAttribute('data-theme', 'light');
+      }
+    })();
+  </script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/client/assets/client.css">
+</head>
+<body>
+  <div id="boot" class="boot" aria-hidden="true">
+    <div class="boot__mark">
+      <svg viewBox="0 0 32 32" width="34" height="34" aria-hidden="true">
+        <path d="M8 15.5 16 8.5l8 7M10.8 14v9.5h10.4V14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <div class="boot__text">Kostantinopel API Client</div>
+    <div class="boot__bar"><span></span></div>
+  </div>
+
+  <div id="app" class="app-root"></div>
+  <div id="toast-root" class="toast-root" role="status" aria-live="polite"></div>
+  <div id="modal-root" class="modal-root"></div>
+
+  <noscript>
+    <div class="noscript">Web client ini membutuhkan JavaScript. Aktifkan JavaScript lalu muat ulang halaman.</div>
+  </noscript>
+
+  <script type="module" src="/client/js/app.js"></script>
+</body>
+</html>
